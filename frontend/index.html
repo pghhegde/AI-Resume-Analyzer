@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resume Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+  <nav class="bg-white shadow-md p-4 flex justify-between items-center sticky top-0 z-50">
+    <div class="flex items-center space-x-2">
+      <img src="assets/logo.png" alt="Logo" class="w-8 h-8">
+      <h1 class="text-xl font-bold text-indigo-600">Resume Analyzer</h1>
+    </div>
+    <button onclick="logout()" class="text-sm bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition">
+      Logout
+    </button>
+  </nav>
+
+  <header class="text-center py-16 bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+    <h2 class="text-4xl font-extrabold mb-4 animate-bounce">Analyze Your Resume</h2>
+    <p class="text-lg">Upload your resume and match it against real job offers</p>
+  </header>
+
+  <main class="max-w-5xl mx-auto mt-10 grid md:grid-cols-3 gap-8">
+    <div class="md:col-span-2 bg-white p-8 rounded-2xl shadow-lg">
+      <form id="resumeForm" class="space-y-4">
+        <input type="file" id="resumeFile" accept=".pdf,.docx" required
+          class="w-full border px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        
+        <textarea id="jobDescription" placeholder="Paste Job Description here or choose from job offers..." rows="4"
+          class="w-full border px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"></textarea>
+        
+        <button type="submit"
+          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg transition">
+          Analyze Resume
+        </button>
+      </form>
+
+      <section id="results" class="hidden mt-8">
+        <h3 class="text-xl font-bold mb-2">Analysis Results</h3>
+        <p><strong>Skills Extracted:</strong> <span id="skills"></span></p>
+        <p><strong>Keywords Match:</strong> <span id="keywords"></span></p>
+        <p><strong>Match Score:</strong> <span id="score"></span></p>
+
+        <canvas id="scoreChart" class="mt-4"></canvas>
+      </section>
+    </div>
+
+    <aside class="bg-white p-6 rounded-2xl shadow-lg">
+      <h3 class="text-lg font-bold mb-4">Available Job Offers</h3>
+      <div id="jobOffersContainer" class="space-y-4">
+        <p class="text-center text-gray-500">Loading jobs...</p>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    let fetchedJobs = [];
+
+    function logout() {
+      window.location.href = "login.html";
+    }
+
+    // Function to fetch and display job offers from the backend
+    async function fetchJobs() {
+      const jobOffersContainer = document.getElementById("jobOffersContainer");
+      jobOffersContainer.innerHTML = `<p class="text-center text-gray-500">Loading jobs...</p>`;
+      
+      try {
+        const response = await fetch('/jobs');
+        if (!response.ok) {
+          throw new Error('Failed to fetch jobs from backend');
+        }
+        fetchedJobs = await response.json();
+        
+        jobOffersContainer.innerHTML = "";
+        if (fetchedJobs.length === 0) {
+          jobOffersContainer.innerHTML = `<p class="text-center text-gray-500">No jobs found.</p>`;
+          return;
+        }
+
+        fetchedJobs.forEach(job => {
+          const card = document.createElement("div");
+          card.className = "border p-4 rounded-lg shadow-sm hover:shadow-md transition cursor-pointer";
+          card.innerHTML = `
+            <h4 class="font-semibold text-indigo-700">${job.title}</h4>
+            <p class="text-sm text-gray-600">${job.company}</p>
+            <p class="text-sm mt-1">${job.description.substring(0, 150)}...</p>
+            <button class="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-sm"
+              onclick="selectJob('${job.id}')">View & Analyze</button>
+          `;
+          jobOffersContainer.appendChild(card);
+        });
+
+      } catch (error) {
+        jobOffersContainer.innerHTML = `<p class="text-center text-red-500">Failed to load jobs. Please try again later.</p>`;
+        console.error("Error fetching jobs:", error);
+      }
+    }
+
+    // Select Job Offer → fills JD text area
+    function selectJob(jobId) {
+      const job = fetchedJobs.find(j => j.id == jobId); // Use loose comparison due to string/number id mix
+      if (job) {
+        document.getElementById("jobDescription").value = job.description;
+      }
+    }
+
+    // Resume Form Submit Handler
+    const form = document.getElementById('resumeForm');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const resumeFile = document.getElementById('resumeFile').files[0];
+      const jobDescription = document.getElementById('jobDescription').value;
+
+      if (!resumeFile || !jobDescription) {
+        alert("Please upload a resume and paste a job description.");
+        return;
+      }
+      
+      // Show results section and loading state
+      const resultsSection = document.getElementById('results');
+      resultsSection.classList.remove('hidden');
+      document.getElementById('skills').textContent = "Analyzing...";
+      document.getElementById('keywords').textContent = "Analyzing...";
+      document.getElementById('score').textContent = "Loading...";
+
+      const formData = new FormData();
+      formData.append('resume', resumeFile);
+      formData.append('job_description', jobDescription);
+
+      try {
+        const response = await fetch('/analyze', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error);
+        }
+
+        const data = await response.json();
+
+        // Populate the results
+        document.getElementById('skills').textContent = data.skills.join(', ');
+        document.getElementById('keywords').textContent = data.matched_keywords.join(', ');
+        document.getElementById('score').textContent = `${data.score.toFixed(2)}%`;
+        
+        // Update the Chart
+        const ctx = document.getElementById('scoreChart').getContext('2d');
+        const scoreValue = data.score;
+        
+        if (window.myDoughnutChart) {
+          window.myDoughnutChart.destroy();
+        }
+
+        window.myDoughnutChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Match', 'Gap'],
+            datasets: [{
+              data: [scoreValue, 100 - scoreValue],
+              backgroundColor: ['#4F46E5', '#E5E7EB']
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '80%',
+            plugins: {
+              legend: { display: false }
+            }
+          }
+        });
+
+      } catch (error) {
+        alert(`Analysis failed: ${error.message}`);
+        document.getElementById('results').classList.add('hidden');
+      }
+    });
+
+    // Initial fetch of jobs when the page loads
+    document.addEventListener('DOMContentLoaded', fetchJobs);
+  </script>
+</body>
+</html>
